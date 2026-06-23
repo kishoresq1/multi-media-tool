@@ -1,0 +1,127 @@
+// Prisma schema for Content_Service
+// datasource: PostgreSQL
+// generator: prisma-client-js
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ContentAssetType {
+  email
+  hyperframe
+  video
+  linkedin_post
+  slack_msg
+  teams_msg
+}
+
+enum ContentAssetStatus {
+  pending_review
+  approved
+  rejected
+  published
+}
+
+enum CampaignStatus {
+  draft
+  approved
+  sent
+}
+
+enum ApprovalHistoryAction {
+  submitted
+  approved
+  rejected
+  edited
+}
+
+model content_assets {
+  id                   String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  asset_type           ContentAssetType
+  intel_id             String?            @db.Uuid
+  status               ContentAssetStatus @default(pending_review)
+  ai_generated_content Json?
+  human_edited_content Json?
+  reviewer_notes       String?            @db.VarChar(2000)
+  reviewed_by          String?            @db.Uuid
+  reviewed_at          DateTime?
+  edited_at            DateTime?
+  file_path            String?
+  mime_type            String?
+  created_by           String?            @db.Uuid
+  created_at           DateTime           @default(now())
+  updated_at           DateTime           @updatedAt
+
+  campaigns              campaigns[]
+  approval_queue_history approval_queue_history[]
+
+  @@index([status, created_at(sort: Desc)])
+  @@index([asset_type])
+  @@index([intel_id])
+  @@index([created_by])
+  @@index([reviewed_by])
+}
+
+model campaigns {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  asset_id       String?        @db.Uuid
+  intel_id       String?        @db.Uuid
+  intel_title    String?
+  campaign_data  Json?
+  recipients     Json?
+  status         CampaignStatus @default(draft)
+  sent_at        DateTime?
+  email_delivery Json?
+  created_at     DateTime       @default(now())
+
+  asset content_assets? @relation(fields: [asset_id], references: [id], onDelete: SetNull)
+
+  @@index([asset_id])
+  @@index([intel_id])
+  @@index([status, created_at(sort: Desc)])
+}
+
+model subscribers {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email       String   @unique
+  name        String?
+  company     String?
+  active      Boolean  @default(true)
+  preferences Json?
+  created_at  DateTime @default(now())
+
+  @@index([active, created_at(sort: Desc)])
+}
+
+model linkedin_oauth_tokens {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  member_sub    String   @unique
+  member_urn    String
+  display_name  String
+  access_token  String   @db.Text
+  refresh_token String?  @db.Text
+  expires_at    DateTime
+  scopes        String?
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+}
+
+model approval_queue_history {
+  id         String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  asset_id   String                @db.Uuid
+  action     ApprovalHistoryAction
+  actor_id   String?               @db.Uuid
+  notes      String?               @db.Text
+  created_at DateTime              @default(now())
+
+  asset content_assets @relation(fields: [asset_id], references: [id], onDelete: Cascade)
+
+  @@index([asset_id, created_at(sort: Desc)])
+  @@index([action, created_at(sort: Desc)])
+  @@index([actor_id])
+}

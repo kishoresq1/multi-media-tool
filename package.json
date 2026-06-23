@@ -1,0 +1,18 @@
+{
+  "name": "unified-multimedia-platform",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "content-service",
+    "security-dashboard",
+    "marketing-dashboard"
+  ],
+  "scripts": {
+    "dev:content": "npm --prefix content-service run dev:api",
+    "dev:security": "npm --prefix security-dashboard run dev",
+    "dev:marketing": "npm --prefix marketing-dashboard run dev",
+    "build:security": "npm --prefix security-dashboard run build",
+    "build:marketing": "npm --prefix marketing-dashboard run build",
+    "test:content": "npm --prefix content-service test"
+  }
+}
