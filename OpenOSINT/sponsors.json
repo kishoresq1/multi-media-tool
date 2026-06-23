@@ -1,0 +1,12 @@
+[
+  {
+    "name": "IP2Location.io",
+    "tagline": "Enhanced IP geolocation, ISP, VPN/Proxy/Tor, and datacenter detection",
+    "url": "https://www.ip2location.io/?utm_source=openosint&utm_medium=readme&utm_campaign=featured",
+    "logo": "https://img.shields.io/badge/IP2Location.io-sponsored-FF6B35?style=flat-square",
+    "tier": "featured",
+    "tool": "search_ip2location",
+    "category": "IP Geolocation & Threat Intelligence",
+    "contact": "sales@ip2location.com"
+  }
+]

@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Parallel OSINT: Investigating Multiple Targets Simultaneously</title>
+<meta name="description" content="Sequential OSINT investigations scale poorly. This guide covers asyncio-based parallel investigation patterns, OpenOSINT's multi-target runner, rate limit management, and result aggregation for bulk target lists.">
+<meta name="keywords" content="parallel OSINT, bulk OSINT, asyncio OSINT, multi-target investigation, OSINT automation, OSINT scaling, Python async OSINT">
+<link rel="canonical" href="https://openosint.tech/blog/parallel-osint.html">
+<meta property="og:title" content="Parallel OSINT: Investigating Multiple Targets Simultaneously">
+<meta property="og:description" content="Asyncio-based parallel OSINT patterns, OpenOSINT's multi-target runner, rate limit management, and result aggregation for bulk target lists.">
+<meta property="og:url" content="https://openosint.tech/blog/parallel-osint.html">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="OpenOSINT">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Parallel OSINT: Investigating Multiple Targets Simultaneously">
+<meta name="twitter:description" content="Scale OSINT investigations with asyncio. Multi-target runner, rate limit management, and structured result aggregation patterns.">
+<link rel="icon" type="image/svg+xml" href="../logo.svg">
+<link rel="stylesheet" href="../style.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "Parallel OSINT: Investigating Multiple Targets Simultaneously",
+  "author": { "@type": "Organization", "name": "OpenOSINT" },
+  "publisher": { "@type": "Organization", "name": "OpenOSINT", "url": "https://openosint.tech" },
+  "datePublished": "2026-05-24",
+  "dateModified": "2026-05-24",
+  "url": "https://openosint.tech/blog/parallel-osint.html",
+  "description": "Sequential OSINT investigations scale poorly. This guide covers asyncio-based parallel investigation patterns, OpenOSINT's multi-target runner, rate limit management, and result aggregation for bulk target lists."
+}
+</script>
+</head>
+<body>
+
+<div id="nav">
+<a href="/" style="color:#3fb950;font-weight:bold;">HOME</a>
+<a href="/blog/" style="color:#58a6ff;">BLOG</a>
+<a href="/tools/" style="color:#58a6ff;">TOOLS</a>
+<a href="https://github.com/OpenOSINT/OpenOSINT" target="_blank" rel="noopener">GITHUB</a>
+</div>
+
+<div id="content">
+
+<div style="font-family:monospace;font-size:12px;margin-bottom:4px;">
+<a href="/blog/">&larr; Back to Blog</a>
+</div>
+
+<h2>PARALLEL OSINT: MULTIPLE TARGETS SIMULTANEOUSLY</h2>
+<div class="indent">
+<p style="font-family:monospace;font-size:12px;">Published: 2026-05-24</p>
+</div>
+
+<h2>THE SCALING PROBLEM WITH SEQUENTIAL INVESTIGATION</h2>
+<div class="indent">
+<p>A single OSINT investigation against one target takes 30&ndash;90 seconds: WHOIS lookup, subdomain enumeration, IP reputation checks, breach lookup, username search. That is fine for individual investigations. It becomes a bottleneck at scale. A threat intelligence analyst reviewing 50 suspicious IPs from a SIEM alert, a security team auditing 200 contractor email addresses for breach exposure, or a researcher investigating a botnet's C2 infrastructure spanning 300 domains &mdash; all of them face the same problem. Sequential execution at 60 seconds per target means 50 minutes for 50 targets and 5 hours for 300.</p>
+<p>The solution is not faster tools. It is parallel execution: running investigations concurrently rather than one after another. The constraint is rate limits on the APIs being queried, not computation on the local machine. With proper concurrency control, the same 50-target investigation runs in under 5 minutes.</p>
+</div>
+
+<h2>ASYNCIO FUNDAMENTALS FOR OSINT PIPELINES</h2>
+<div class="indent">
+<p>Python's <code>asyncio</code> is the right tool for I/O-bound OSINT work. All OpenOSINT tool functions are <code>async def</code> coroutines. To run multiple targets in parallel, wrap them with <code>asyncio.gather()</code>:</p>
+<pre>import asyncio
+from openosint.tools.search_whois import run_whois_osint
+from openosint.tools.search_ip import run_ip_osint
+
+async def investigate_domain(domain: str) -> dict:
+    whois_result = await run_whois_osint(domain)
+    return {'domain': domain, 'whois': whois_result}
+
+async def bulk_investigate(domains: list[str]) -> list[dict]:
+    tasks = [investigate_domain(d) for d in domains]
+    return await asyncio.gather(*tasks, return_exceptions=True)
+
+results = asyncio.run(bulk_investigate(['example.com', 'test.org', 'demo.net']))</pre>
+<p><code>return_exceptions=True</code> is critical in bulk runs: it prevents one failed target from canceling the entire gather. Each result is either a value or an exception instance, which you filter and log separately.</p>
+</div>
+
+<h2>RATE LIMIT MANAGEMENT</h2>
+<div class="indent">
+<p>Unbounded parallelism gets API keys suspended. The correct pattern uses a semaphore to cap concurrent requests per API:</p>
+<pre>import asyncio
+
+# Limit to 5 concurrent requests to respect API rate limits
+sem = asyncio.Semaphore(5)
+
+async def rate_limited_lookup(ip: str, lookup_fn) -> dict:
+    async with sem:
+        result = await lookup_fn(ip)
+        await asyncio.sleep(0.2)  # 200ms between releases = max 5 req/s
+        return result
+
+async def bulk_ip_check(ips: list[str], lookup_fn) -> list[dict]:
+    tasks = [rate_limited_lookup(ip, lookup_fn) for ip in ips]
+    return await asyncio.gather(*tasks, return_exceptions=True)</pre>
+<p>Tune the semaphore value and sleep delay to match each API's rate limits. AbuseIPDB free tier allows 1000 requests/day with no per-second limit documented; use a semaphore of 10 and no sleep. Shodan free tier: 1 request/second; semaphore of 1 with 1.0s sleep. VirusTotal free tier: 4 requests/minute; semaphore of 4 with 15s sleep between batches.</p>
+<p>For multi-API pipelines, run a separate semaphore per API. A domain investigation that hits Shodan, VirusTotal, and AbuseIPDB simultaneously needs three independent concurrency controls, each tuned to its API's limits.</p>
+</div>
+
+<h2>THE OPENOSINT MULTI-TARGET RUNNER</h2>
+<div class="indent">
+<p>OpenOSINT's built-in multi-target runner handles the concurrency and rate limiting automatically. Create a target list file, one per line:</p>
+<pre># targets.txt
+192.168.1.1
+10.0.0.1
+suspicious-domain.net
+attacker@example.com</pre>
+<p>Run the investigation:</p>
+<pre># AI-assisted, all targets in parallel, JSON output
+openosint multi targets.txt --json &gt; results.json
+
+# Direct tool, no AI, IP reputation only
+openosint multi targets.txt --tool ip --json &gt; ip_results.json</pre>
+<p>The multi-target runner type-detects each target (IP vs domain vs email vs username), dispatches the appropriate tool set, runs concurrently with built-in rate limiting, and writes structured JSON results. Each result object contains the target, the tool outputs, any errors, and a timestamp. See the <a href="/tools/">tools reference</a> for the full result schema.</p>
+</div>
+
+<h2>RESULT AGGREGATION AND DEDUPLICATION</h2>
+<div class="indent">
+<p>Parallel investigation produces a list of result objects. The next step is aggregation: identifying cross-target patterns that indicate related infrastructure or coordinated activity.</p>
+<pre>import json
+from collections import defaultdict
+
+with open('results.json') as f:
+    results = json.load(f)
+
+# Group IPs by ASN to find infrastructure clusters
+asn_groups = defaultdict(list)
+for r in results:
+    if r.get('tool') == 'search_ip' and 'asn' in r.get('data', {}):
+        asn_groups[r['data']['asn']].append(r['target'])
+
+# Flag targets sharing infrastructure
+for asn, targets in asn_groups.items():
+    if len(targets) > 1:
+        print(f"Shared ASN {asn}: {', '.join(targets)}")</pre>
+<p>The same pattern works for any shared attribute: registrar, nameserver, creation date window, or abuse report category. Finding 15 domains that registered on the same day through the same privacy-protected registrar service is a signal that no single-target investigation would surface. This is the analytical value of parallel investigation over sequential. For generating structured reports from aggregated results, see the <a href="/blog/osint-report-generation.html">OSINT report generation guide</a>. For the API-level details of each data source, see the <a href="/blog/osint-api-automation.html">OSINT API automation guide</a>.</p>
+</div>
+
+<h2>SEE ALSO</h2>
+<div class="indent">
+<ul>
+<li><a href="/blog/osint-api-automation.html">Automating OSINT with APIs</a> &mdash; per-API rate limits, authentication, and Python patterns</li>
+<li><a href="/blog/osint-report-generation.html">Generating structured OSINT reports</a> &mdash; JSON, PDF, and Markdown output from bulk results</li>
+<li><a href="/tools/">OpenOSINT tools reference</a> &mdash; multi-target runner documentation and result schemas</li>
+</ul>
+</div>
+
+<hr>
+
+<div style="margin-top:24px; padding-top:12px; border-top:1px solid #ccc; font-family:monospace; font-size:12px; text-align:center;">
+<a href="/">Home</a> &middot;
+<a href="/blog/">Blog</a> &middot;
+<a href="/tools/">Tools</a> &middot;
+<a href="https://github.com/OpenOSINT/OpenOSINT" target="_blank" rel="noopener">GitHub</a>
+</div>
+
+</div>
+</body>
+</html>
